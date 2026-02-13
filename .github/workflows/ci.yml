@@ -44,7 +44,23 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      # 5. Corre los unit tests con cobertura
+      # 5. Crear archivo de credenciales dummy para tests
+      # Los tests mockean firebase-admin, pero el archivo debe existir
+      - name: Create dummy service account key
+        run: |
+          echo '{
+            "type": "service_account",
+            "project_id": "test-project",
+            "private_key_id": "test123",
+            "private_key": "-----BEGIN PRIVATE KEY-----\nMIIBVAIBADANBgkqhkiG9w0BAQEFAASCAT4wggE6AgEAAkEAtest\n-----END PRIVATE KEY-----\n",
+            "client_email": "test@test.iam.gserviceaccount.com",
+            "client_id": "123456789",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs"
+          }' > serviceAccountKey.json
+
+      # 6. Corre los unit tests con cobertura
       - name: Run Unit Tests
         run: pnpm api:tests:ut
 
@@ -76,6 +92,20 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+
+      - name: Create dummy service account key
+        run: |
+          echo '{
+            "type": "service_account",
+            "project_id": "test-project",
+            "private_key_id": "test123",
+            "private_key": "-----BEGIN PRIVATE KEY-----\nMIIBVAIBADANBgkqhkiG9w0BAQEFAASCAT4wggE6AgEAAkEAtest\n-----END PRIVATE KEY-----\n",
+            "client_email": "test@test.iam.gserviceaccount.com",
+            "client_id": "123456789",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs"
+          }' > serviceAccountKey.json
 
       - name: Run E2E Tests
         run: pnpm api:tests:e2e
