@@ -8,7 +8,7 @@ describe('JwtStrategy', () => {
   let authService: AuthService;
 
   const mockAuthService = {
-    validateUser: jest.fn(),
+    findById: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -38,25 +38,25 @@ describe('JwtStrategy', () => {
         name: 'Test',
       };
 
-      mockAuthService.validateUser.mockResolvedValue(mockUser);
+      mockAuthService.findById.mockResolvedValue(mockUser);
 
       const result = await strategy.validate(payload);
 
-      expect(authService.validateUser).toHaveBeenCalledWith('123');
+      expect(authService.findById).toHaveBeenCalledWith('123');
       expect(result).toEqual({ userId: '123', email: 'test@example.com' });
     });
 
     it('should throw UnauthorizedException if validateUser throws', async () => {
       const payload = { sub: '123', email: 'test@example.com' };
 
-      mockAuthService.validateUser.mockRejectedValue(
+      mockAuthService.findById.mockRejectedValue(
         new UnauthorizedException('User not found'),
       );
 
       await expect(strategy.validate(payload)).rejects.toThrow(
         UnauthorizedException,
       );
-      expect(authService.validateUser).toHaveBeenCalledWith('123');
+      expect(authService.findById).toHaveBeenCalledWith('123');
     });
 
     it('should handle different user IDs', async () => {
@@ -68,7 +68,7 @@ describe('JwtStrategy', () => {
         name: 'Another',
       };
 
-      mockAuthService.validateUser.mockResolvedValue(mockUser);
+      mockAuthService.findById.mockResolvedValue(mockUser);
 
       const result = await strategy.validate(payload);
 

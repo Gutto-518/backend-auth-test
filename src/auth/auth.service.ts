@@ -1,78 +1,97 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { User } from './interfaces/user.interface';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
+import { FirebaseService } from '../firebase/firebase.service';
+import { WeatherService } from '../weather/weather.service';
 
 @Injectable()
 export class AuthService {
-  // Almacenamiento en memoria (mock de base de datos)
-  private users: User[] = [];
-
-  constructor(private jwtService: JwtService) {}
+  constructor(
+    private jwtService: JwtService,
+    private firebaseService: FirebaseService,
+    private weatherService: WeatherService,
+  ) {}
 
   async signup(signupDto: SignupDto): Promise<{ accessToken: string }> {
     const { email, password, name } = signupDto;
-
-    // Verificar si el usuario ya existe
-    const existingUser = this.users.find(user => user.email === email);
-    if (existingUser) {
+  
+    const usersRef = this.firebaseService.firestore.collection('users');
+  
+    // 1️⃣ Verificar si el usuario ya existe
+    const existingUser = await usersRef
+      .where('email', '==', email)
+      .get();
+  
+    if (!existingUser.empty) {
       throw new UnauthorizedException('User already exists');
     }
-
-    // Encriptar la contraseña
+  
+    // 2️⃣ Encriptar contraseña
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Crear el usuario
-    const user: User = {
-      id: Date.now().toString(), // ID simple para el ejemplo
+  
+    // 3️⃣ Guardar en Firebase
+    const userDoc = await usersRef.add({
       email,
       password: hashedPassword,
       name,
+      createdAt: new Date(),
+    });
+  
+    // 4️⃣ Generar JWT
+    const payload = { email, sub: userDoc.id };
+  
+    return {
+      accessToken: this.jwtService.sign(payload),
     };
-
-    this.users.push(user);
-
-    // Generar token JWT
-    const payload = { email: user.email, sub: user.id };
-    const accessToken = this.jwtService.sign(payload);
-
-    return { accessToken };
   }
 
-  async login(loginDto: LoginDto): Promise<{ accessToken: string }> {
+  async login(loginDto: LoginDto): Promise<{ accessToken: string; weather: any }> {
     const { email, password } = loginDto;
-
-    // Buscar el usuario
-    const user = this.users.find(user => user.email === email);
-    if (!user) {
+  
+    const usersRef = this.firebaseService.firestore.collection('users');
+  
+    const snapshot = await usersRef
+      .where('email', '==', email)
+      .get();
+  
+    if (snapshot.empty) {
       throw new UnauthorizedException('Invalid credentials');
     }
-
-    // Verificar la contraseña
+  
+    const userDoc = snapshot.docs[0];
+    const user = userDoc.data();
+  
     const isPasswordValid = await bcrypt.compare(password, user.password);
+  
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
-
-    // Generar token JWT
-    const payload = { email: user.email, sub: user.id };
-    const accessToken = this.jwtService.sign(payload);
-
-    return { accessToken };
-  }
-
-  async validateUser(userId: string): Promise<User> {
-    const user = this.users.find(user => user.id === userId);
-    if (!user) {
-      throw new UnauthorizedException('User not found');
+  
+    let weather: { temp: number; description: string } | null = null;
+    try {
+      weather = await this.weatherService.getWeather();
+    } catch {
+      // Si la API del clima falla, no bloqueamos el login
     }
-    return user;
-  }
 
-  // Método auxiliar para testing (poder limpiar usuarios)
-  clearUsers(): void {
-    this.users = [];
+    const payload = { email: user.email, sub: userDoc.id };
+  
+    return {
+      accessToken: this.jwtService.sign(payload),
+      weather,
+    };
+  }
+  
+  async findById(id: string) {
+    const doc = await this.firebaseService.firestore
+      .collection('users')
+      .doc(id)
+      .get();
+  
+    if (!doc.exists) return null;
+  
+    return { id: doc.id, ...doc.data() };
   }
 }

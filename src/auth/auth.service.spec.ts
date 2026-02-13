@@ -2,201 +2,264 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
+import { FirebaseService } from '../firebase/firebase.service';
+import { WeatherService } from '../weather/weather.service';
 import * as bcrypt from 'bcrypt';
 
 jest.mock('bcrypt');
 
 describe('AuthService', () => {
   let service: AuthService;
-  let jwtService: JwtService;
+
+  const mockFirestore = {
+    collection: jest.fn(),
+  };
+
+  const mockFirebaseService = {
+    firestore: mockFirestore,
+  };
 
   const mockJwtService = {
     sign: jest.fn(),
   };
 
+  const mockWeatherService = {
+    getWeather: jest.fn(),
+  };
+
   beforeEach(async () => {
+    jest.clearAllMocks();
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
-        {
-          provide: JwtService,
-          useValue: mockJwtService,
-        },
+        { provide: FirebaseService, useValue: mockFirebaseService },
+        { provide: JwtService, useValue: mockJwtService },
+        { provide: WeatherService, useValue: mockWeatherService },
       ],
     }).compile();
 
     service = module.get<AuthService>(AuthService);
-    jwtService = module.get<JwtService>(JwtService);
-
-    service.clearUsers();
-    jest.clearAllMocks();
   });
+
+  // ========================
+  // SIGNUP
+  // ========================
 
   describe('signup', () => {
-    it('should create a new user and return access token', async () => {
-      const signupDto = {
-        email: 'test@example.com',
-        password: 'password123',
-        name: 'Test User',
-      };
-
-      (bcrypt.hash as jest.Mock).mockResolvedValue('hashedPassword123');
-      mockJwtService.sign.mockReturnValue('fake-jwt-token');
-
-      const result = await service.signup(signupDto);
-
-      expect(bcrypt.hash).toHaveBeenCalledWith('password123', 10);
-      expect(mockJwtService.sign).toHaveBeenCalledWith({
-        email: signupDto.email,
-        sub: expect.any(String),
-      });
-      expect(result).toEqual({ accessToken: 'fake-jwt-token' });
-    });
-
-    it('should throw UnauthorizedException if user already exists', async () => {
-      const signupDto = {
-        email: 'test@example.com',
-        password: 'password123',
-        name: 'Test User',
+    it('should create user and return token', async () => {
+      const dto = {
+        email: 'test@test.com',
+        password: '123456',
+        name: 'Test',
       };
 
       (bcrypt.hash as jest.Mock).mockResolvedValue('hashedPassword');
-      mockJwtService.sign.mockReturnValue('fake-jwt-token');
 
-      await service.signup(signupDto);
+      mockFirestore.collection.mockReturnValue({
+        where: jest.fn().mockReturnValue({
+          get: jest.fn().mockResolvedValue({ empty: true }),
+        }),
+        add: jest.fn().mockResolvedValue({ id: '123' }),
+      });
 
-      await expect(service.signup(signupDto)).rejects.toThrow(
+      mockJwtService.sign.mockReturnValue('mocked_token');
+
+      const result = await service.signup(dto);
+
+      expect(bcrypt.hash).toHaveBeenCalledWith('123456', 10);
+      expect(mockJwtService.sign).toHaveBeenCalledWith({
+        email: dto.email,
+        sub: '123',
+      });
+
+      expect(result).toEqual({
+        accessToken: 'mocked_token',
+      });
+    });
+
+    it('should throw if user already exists', async () => {
+      const dto = {
+        email: 'test@test.com',
+        password: '123456',
+        name: 'Test',
+      };
+
+      mockFirestore.collection.mockReturnValue({
+        where: jest.fn().mockReturnValue({
+          get: jest.fn().mockResolvedValue({ empty: false }),
+        }),
+      });
+
+      await expect(service.signup(dto)).rejects.toThrow(
         UnauthorizedException,
-      );
-      await expect(service.signup(signupDto)).rejects.toThrow(
-        'User already exists',
       );
     });
   });
+
+  // ========================
+  // LOGIN
+  // ========================
 
   describe('login', () => {
-    it('should return access token for valid credentials', async () => {
-      const signupDto = {
-        email: 'test@example.com',
-        password: 'password123',
-        name: 'Test User',
+    it('should return token and weather', async () => {
+      const dto = {
+        email: 'test@test.com',
+        password: '123456',
       };
-
-      (bcrypt.hash as jest.Mock).mockResolvedValue('hashedPassword');
-      mockJwtService.sign.mockReturnValue('fake-jwt-token');
-      await service.signup(signupDto);
 
       (bcrypt.compare as jest.Mock).mockResolvedValue(true);
-      mockJwtService.sign.mockReturnValue('login-jwt-token');
 
-      const loginDto = {
-        email: 'test@example.com',
-        password: 'password123',
-      };
+      mockFirestore.collection.mockReturnValue({
+        where: jest.fn().mockReturnValue({
+          get: jest.fn().mockResolvedValue({
+            empty: false,
+            docs: [
+              {
+                id: '123',
+                data: () => ({
+                  email: dto.email,
+                  password: 'hashedPassword',
+                }),
+              },
+            ],
+          }),
+        }),
+      });
 
-      const result = await service.login(loginDto);
+      mockJwtService.sign.mockReturnValue('login_token');
+      mockWeatherService.getWeather.mockResolvedValue({
+        temp: 25,
+        description: 'clear sky',
+      });
 
-      expect(bcrypt.compare).toHaveBeenCalledWith(
-        'password123',
-        'hashedPassword',
-      );
-      expect(result).toEqual({ accessToken: 'login-jwt-token' });
+      const result = await service.login(dto);
+
+      expect(result).toEqual({
+        accessToken: 'login_token',
+        weather: {
+          temp: 25,
+          description: 'clear sky',
+        },
+      });
     });
 
-    it('should throw UnauthorizedException for non-existent user', async () => {
-      const loginDto = {
-        email: 'nonexistent@example.com',
-        password: 'password123',
-      };
+    it('should throw if user not found', async () => {
+      mockFirestore.collection.mockReturnValue({
+        where: jest.fn().mockReturnValue({
+          get: jest.fn().mockResolvedValue({ empty: true }),
+        }),
+      });
 
-      await expect(service.login(loginDto)).rejects.toThrow(
-        UnauthorizedException,
-      );
-      await expect(service.login(loginDto)).rejects.toThrow(
-        'Invalid credentials',
-      );
+      await expect(
+        service.login({ email: 'x', password: 'x' }),
+      ).rejects.toThrow(UnauthorizedException);
     });
 
-    it('should throw UnauthorizedException for invalid password', async () => {
-      const signupDto = {
-        email: 'test@example.com',
-        password: 'password123',
-        name: 'Test User',
-      };
-
-      (bcrypt.hash as jest.Mock).mockResolvedValue('hashedPassword');
-      mockJwtService.sign.mockReturnValue('fake-jwt-token');
-      await service.signup(signupDto);
-
+    it('should throw if password invalid', async () => {
       (bcrypt.compare as jest.Mock).mockResolvedValue(false);
 
-      const loginDto = {
-        email: 'test@example.com',
-        password: 'wrongpassword',
-      };
-
-      await expect(service.login(loginDto)).rejects.toThrow(
-        UnauthorizedException,
-      );
-      await expect(service.login(loginDto)).rejects.toThrow(
-        'Invalid credentials',
-      );
-    });
-  });
-
-  describe('validateUser', () => {
-    it('should return user for valid userId', async () => {
-      const signupDto = {
-        email: 'test@example.com',
-        password: 'password123',
-        name: 'Test User',
-      };
-  
-      (bcrypt.hash as jest.Mock).mockResolvedValue('hashedPassword');
-      
-      let capturedUserId: string = '';
-      mockJwtService.sign.mockImplementation((payload) => {
-        capturedUserId = payload.sub;
-        return 'fake-jwt-token';
+      mockFirestore.collection.mockReturnValue({
+        where: jest.fn().mockReturnValue({
+          get: jest.fn().mockResolvedValue({
+            empty: false,
+            docs: [
+              {
+                id: '123',
+                data: () => ({
+                  email: 'x',
+                  password: 'hashedPassword',
+                }),
+              },
+            ],
+          }),
+        }),
       });
-  
-      await service.signup(signupDto);
-  
-      const user = await service.validateUser(capturedUserId);
-      
-      expect(user).toBeDefined();
-      expect(user.email).toBe(signupDto.email);
-      expect(user.name).toBe(signupDto.name);
-      expect(user.id).toBe(capturedUserId);
-    });
-  
-    it('should throw UnauthorizedException if user not found', async () => {
-      await expect(service.validateUser('nonexistent-id')).rejects.toThrow(
-        UnauthorizedException,
-      );
-      await expect(service.validateUser('nonexistent-id')).rejects.toThrow(
-        'User not found',
-      );
+
+      await expect(
+        service.login({ email: 'x', password: 'wrong' }),
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 
-  describe('clearUsers', () => {
-    it('should clear all users', async () => {
-      const signupDto = {
-        email: 'test@example.com',
-        password: 'password123',
-        name: 'Test User',
-      };
+  // ========================
+  // WEATHER FAILURE
+  // ========================
 
-      (bcrypt.hash as jest.Mock).mockResolvedValue('hashedPassword');
-      mockJwtService.sign.mockReturnValue('fake-jwt-token');
-      await service.signup(signupDto);
+  it('should not fail login if weather fails', async () => {
+    (bcrypt.compare as jest.Mock).mockResolvedValue(true);
 
-      service.clearUsers();
+    mockFirestore.collection.mockReturnValue({
+      where: jest.fn().mockReturnValue({
+        get: jest.fn().mockResolvedValue({
+          empty: false,
+          docs: [
+            {
+              id: '123',
+              data: () => ({
+                email: 'x',
+                password: 'hashedPassword',
+              }),
+            },
+          ],
+        }),
+      }),
+    });
 
-      await expect(service.validateUser('any-id')).rejects.toThrow(
-        UnauthorizedException,
-      );
+    mockJwtService.sign.mockReturnValue('token');
+    mockWeatherService.getWeather.mockRejectedValue(
+      new Error('Weather down'),
+    );
+
+    const result = await service.login({
+      email: 'x',
+      password: '123',
+    });
+
+    expect(result.accessToken).toBe('token');
+    expect(result.weather).toBeNull();
+  });
+
+  // ========================
+  // FIND BY ID
+  // ========================
+
+  describe('findById', () => {
+    it('should return user if document exists', async () => {
+      mockFirestore.collection.mockReturnValue({
+        doc: jest.fn().mockReturnValue({
+          get: jest.fn().mockResolvedValue({
+            exists: true,
+            id: '123',
+            data: () => ({
+              email: 'test@test.com',
+              name: 'Test',
+            }),
+          }),
+        }),
+      });
+
+      const result = await service.findById('123');
+
+      expect(result).toEqual({
+        id: '123',
+        email: 'test@test.com',
+        name: 'Test',
+      });
+    });
+
+    it('should return null if document does not exist', async () => {
+      mockFirestore.collection.mockReturnValue({
+        doc: jest.fn().mockReturnValue({
+          get: jest.fn().mockResolvedValue({
+            exists: false,
+          }),
+        }),
+      });
+
+      const result = await service.findById('nonexistent');
+
+      expect(result).toBeNull();
     });
   });
 });
